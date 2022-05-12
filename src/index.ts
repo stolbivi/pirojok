@@ -7,7 +7,3 @@ export { injectScript, injectIframe };
 export { Messages, MessageError };
 export { Storage };
 export { Tabs };
-
-
-
-
