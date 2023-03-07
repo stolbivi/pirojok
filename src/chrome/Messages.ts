@@ -34,12 +34,12 @@ export class Messages {
     }
   }
 
-  private handlePort<M extends TMessage, R>(
+  private handlePort<M extends TMessage, Response>(
     message: M,
     port: Port,
-    resolve: (_: string) => void,
+    resolve: (_: Response) => void,
     reject: (_: string) => void,
-    responder?: OnResponse<R>,
+    responder?: OnResponse<Response>,
   ) {
     const onDisconnectListener = () => {
       if (chrome.runtime.lastError) {
@@ -48,8 +48,6 @@ export class Messages {
         } catch (e) {
           reject('Error handling runtime error: ' + JSON.stringify(e));
         }
-      } else {
-        resolve('Disconnected port for: ' + this._channelId);
       }
       if (this._verbose) {
         console.debug('Removing onDisconnect listener for:', this._channelId);
@@ -57,16 +55,17 @@ export class Messages {
       port.onDisconnect.removeListener(onDisconnectListener);
     };
     port.onDisconnect.addListener(onDisconnectListener);
-    if (responder) {
-      const listener = (response: R & MessageError) => {
+    const listener = (response: Response & MessageError) => {
+      resolve(response);
+      if (responder) {
         responder(response);
-        if (this._verbose) {
-          console.debug('Removing onMessage listener for:', this._channelId);
-        }
-        port.onMessage.removeListener(listener);
-      };
-      port.onMessage.addListener(listener);
-    }
+      }
+      if (this._verbose) {
+        console.debug('Removing onMessage listener for:', this._channelId);
+      }
+      port.onMessage.removeListener(listener);
+    };
+    port.onMessage.addListener(listener);
     port.postMessage(message);
   }
 
@@ -75,8 +74,8 @@ export class Messages {
    * @param message object of type <b>M</b> to send to listeners
    * @param receiver callback used to receive replies from listeners as an object of type <b>R</b>
    */
-  request<M extends TMessage, R>(message: M, onResponse?: OnResponse<R>) {
-    return new Promise((resolve, reject) => {
+  request<M extends TMessage, Response>(message: M, onResponse?: OnResponse<Response>) {
+    return new Promise<Response>((resolve, reject) => {
       const port = chrome.runtime.connect({ name: this._channelId });
       this.handlePort(message, port, resolve, reject, onResponse);
     });
@@ -87,8 +86,8 @@ export class Messages {
    * @param message object of type <b>M</b> to send to listeners
    * @param receiver callback used to receive replies from listeners as an object of type <b>R</b>
    */
-  requestTab<M extends TMessage, R>(tabId: number, message: M, onResponse?: OnResponse<R>) {
-    return new Promise((resolve, reject) => {
+  requestTab<M extends TMessage, Response>(tabId: number, message: M, onResponse?: OnResponse<Response>) {
+    return new Promise<Response>((resolve, reject) => {
       const port = chrome.tabs.connect(tabId, { name: this._channelId });
       this.handlePort(message, port, resolve, reject, onResponse);
     });
@@ -98,7 +97,7 @@ export class Messages {
    * Add listener to messages anywhere, including content scripts of tabs. Each handler corresponds to specific request type. If handler returns anything but false/null/undefined, this will be sent back to requester
    * @param onRequest
    */
-  listen<M extends TMessage, R>(handler: Handler<M, R>): ConnectionListener {
+  listen<M extends TMessage, Response>(handler: Handler<M, Response>): ConnectionListener {
     const onConnectListener = (port: Port) => {
       if (port.name === this._channelId) {
         const onMessageListener = (message: M) => {
