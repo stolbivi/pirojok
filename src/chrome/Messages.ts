@@ -14,7 +14,7 @@ type OnRequest<M extends TMessage, R> = (message: M) => Promise<R>;
 type Handler<M extends TMessage, R> = { [key: number]: OnRequest<M, R> };
 
 /**
- * Chrome Messaging API wrapped into an easy to use framework.
+ * Chrome Messaging API wrapped into an easy-to-use framework.
  */
 export class Messages {
   private readonly _channelId: string;
