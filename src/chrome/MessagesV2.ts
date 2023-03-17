@@ -1,7 +1,8 @@
 import Port = chrome.runtime.Port;
 
 export type Handler<Payload, Response> = (payload: Payload) => Promise<Response>;
-export type ActionCreator<Payload, Response> = (payload: Payload) => Action<Payload, Response>;
+export type PayloadAction<Payload> = () => Payload;
+export type ActionCreator<Payload, Response> = (...args: any[]) => Action<Payload, Response>;
 
 export interface Action<Payload, Response> {
   type: string;
@@ -17,10 +18,10 @@ export function createAction<Payload, Response>(
   type: string,
   handler: Handler<Payload, Response>,
 ): ActionCreator<Payload, Response> {
-  function create(payload: Payload) {
+  function create(...args: any[]): Action<Payload, Response> {
     return {
       type,
-      payload,
+      payload: args[0],
       handler,
     };
   }
@@ -80,8 +81,9 @@ export class MessagesV2 {
     });
   }
 
-  listen<Payload, Response>(action: Action<Payload, Response>): OnConnectListener {
+  listen<Payload, Response>(actionCreator: ActionCreator<Payload, Response>): OnConnectListener {
     const onConnect = (port: Port) => {
+      const action = actionCreator();
       if (port.name === action.type) {
         const onMessage = (payload: Payload) => {
           action
