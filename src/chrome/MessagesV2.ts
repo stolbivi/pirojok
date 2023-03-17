@@ -13,7 +13,24 @@ export type Error = {
   error: string;
 };
 
-type OnConnectListener = (port: Port) => void;
+export function createAction<Payload, Response>(
+  type: string,
+  handler: Handler<Payload, Response>,
+): ActionCreator<Payload, Response> {
+  function create(payload: Payload) {
+    return {
+      type,
+      payload,
+      handler,
+    };
+  }
+
+  create.toString = () => `${type}`;
+  create.type = type;
+  return create;
+}
+
+export type OnConnectListener = (port: Port) => void;
 
 /**
  * Upgraded version of messaging API wrapper. Designed for one time request-response style of communication.
@@ -25,20 +42,6 @@ export class MessagesV2 {
 
   constructor(verbose = false) {
     this._verbose = verbose;
-  }
-
-  createAction<Payload, Response>(type: string, handler: Handler<Payload, Response>): ActionCreator<Payload, Response> {
-    function create(payload: Payload) {
-      return {
-        type,
-        payload,
-        handler,
-      };
-    }
-
-    create.toString = () => `${type}`;
-    create.type = type;
-    return create;
   }
 
   request<Payload, Response>(action: Action<Payload, Response>) {
