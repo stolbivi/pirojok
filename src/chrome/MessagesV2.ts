@@ -2,7 +2,7 @@ import Port = chrome.runtime.Port;
 
 export type Handler<Payload, Response> = (payload: Payload) => Promise<Response>;
 export type PayloadAction<Payload> = () => Payload;
-export type ActionCreator<Payload, Response> = (...args: any[]) => Action<Payload, Response>;
+export type ActionCreator<Payload, Response> = (payload?: Payload) => Action<Payload, Response>;
 
 export interface Action<Payload, Response> {
   type: string;
