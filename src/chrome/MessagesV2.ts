@@ -1,12 +1,16 @@
 import Port = chrome.runtime.Port;
+import MessageSender = chrome.runtime.MessageSender;
 
-export type Handler<Payload, Response> = (payload: Payload) => Promise<Response>;
-export type PayloadAction<Payload> = () => Payload;
-export type ActionCreator<Payload, Response> = (payload?: Payload) => Action<Payload, Response>;
+export type Handler<Payload, Response> = (payload: Payload, sender?: MessageSender) => Promise<Response>;
+export type RequestCreator<Payload, Response> = { (payload?: Payload): Request<Payload, Response>; type: string };
+export type ActionCreator<Payload, Response> = { (payload?: Payload): Action<Payload, Response>; type: string };
 
-export interface Action<Payload, Response> {
+export interface Request<Payload, Response> {
   type: string;
   payload: Payload;
+}
+
+export interface Action<Payload, Response> extends Request<Payload, Response> {
   handler: Handler<Payload, Response>;
 }
 
@@ -14,20 +18,50 @@ export type Error = {
   error: string;
 };
 
+export function createRequest<Payload, Response>(type: string): RequestCreator<Payload, Response> {
+  function create(payload?: Payload): Request<Payload, Response> {
+    return {
+      type,
+      payload: payload as any,
+    };
+  }
+
+  create.toString = () => `${type}`;
+  create.type = type;
+  return create;
+}
+
 export function createAction<Payload, Response>(
   type: string,
   handler: Handler<Payload, Response>,
 ): ActionCreator<Payload, Response> {
-  function create(...args: any[]): Action<Payload, Response> {
+  function create(payload?: Payload): Action<Payload, Response> {
     return {
       type,
-      payload: args[0],
+      payload: payload as any,
       handler,
     };
   }
 
   create.toString = () => `${type}`;
   create.type = type;
+  return create;
+}
+
+export function createFromRequest<Payload, Response>(
+  requestCreator: RequestCreator<Payload, Response>,
+  handler: Handler<Payload, Response>,
+): ActionCreator<Payload, Response> {
+  function create(payload?: Payload): Action<Payload, Response> {
+    return {
+      type: requestCreator.type,
+      payload: payload as any,
+      handler,
+    };
+  }
+
+  create.toString = () => `${requestCreator.type}`;
+  create.type = requestCreator.type;
   return create;
 }
 
@@ -45,26 +79,26 @@ export class MessagesV2 {
     this._verbose = verbose;
   }
 
-  request<Payload, Response>(action: Action<Payload, Response>) {
-    return this.handleRequest<Payload, Response>(action, chrome.runtime.connect({ name: action.type }));
+  request<Payload, Response>(request: Request<Payload, Response>) {
+    return this.handleRequest<Payload, Response>(request, chrome.runtime.connect({ name: request.type }));
   }
 
-  requestTab<Payload, Response>(tabId: number, action: Action<Payload, Response>) {
-    return this.handleRequest<Payload, Response>(action, chrome.tabs.connect(tabId, { name: action.type }));
+  requestTab<Payload, Response>(tabId: number, request: Request<Payload, Response>) {
+    return this.handleRequest<Payload, Response>(request, chrome.tabs.connect(tabId, { name: request.type }));
   }
 
-  private handleRequest<Payload, Response>(action: Action<Payload, Response>, port: Port) {
+  private handleRequest<Payload, Response>(request: Request<Payload, Response>, port: Port) {
     return new Promise<Response & Error>((resolve, reject) => {
       const onDisconnect = () => {
-        if (chrome.runtime.lastError) {
-          try {
+        try {
+          if (chrome.runtime.lastError) {
             reject(chrome.runtime.lastError.message as string);
-          } catch (e) {
-            reject('Error handling runtime error: ' + JSON.stringify(e));
           }
+        } catch (e) {
+          reject('Error handling runtime error: ' + JSON.stringify(e));
         }
         if (this._verbose) {
-          console.debug('Removing onDisconnect listener for:', action.type);
+          console.debug('Removing onDisconnect listener for:', request.type);
         }
         port.onDisconnect.removeListener(onDisconnect);
       };
@@ -72,12 +106,16 @@ export class MessagesV2 {
       const onMessage = (response: Response & Error) => {
         resolve(response);
         if (this._verbose) {
-          console.debug('Removing onMessage listener for:', action.type);
+          console.debug('Removing onMessage listener for:', request.type);
         }
         port.onMessage.removeListener(onMessage);
       };
       port.onMessage.addListener(onMessage);
-      port.postMessage(action.payload);
+      try {
+        port.postMessage(request.payload);
+      } catch (e) {
+        reject('Error posting message: ' + JSON.stringify(e));
+      }
     });
   }
 
@@ -87,10 +125,12 @@ export class MessagesV2 {
       if (port.name === action.type) {
         const onMessage = (payload: Payload) => {
           action
-            .handler(payload)
+            .handler(payload, port.sender)
             .then((response) => {
-              if (response) {
+              try {
                 port.postMessage(response);
+              } catch (e) {
+                console.error('Error posting response:', JSON.stringify(e));
               }
             })
             .then(() => {
