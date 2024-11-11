@@ -1,6 +1,6 @@
 {
   "name": "@stolbivi/pirojok",
-  "version": "1.19.0",
+  "version": "1.22.0",
   "description": "Some minimalistic library used to build chrome extensions, covers some popular Chrome Extension API",
   "author": "Viktor Stolbin",
   "license": "ISC",

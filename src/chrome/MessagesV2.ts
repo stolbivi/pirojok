@@ -8,9 +8,12 @@ export type ActionCreator<Payload, Response> = { (payload?: Payload): Action<Pay
 export interface Request<Payload, Response> {
   type: string;
   payload: Payload;
+  toAction: () => Action<Payload, Response>;
 }
 
-export interface Action<Payload, Response> extends Request<Payload, Response> {
+export interface Action<Payload, Response> {
+  type: string;
+  payload: Payload;
   handler: Handler<Payload, Response>;
 }
 
@@ -20,9 +23,13 @@ export type Error = {
 
 export function createRequest<Payload, Response>(type: string): RequestCreator<Payload, Response> {
   function create(payload?: Payload): Request<Payload, Response> {
-    return {
+    const request = {
       type,
       payload: payload as any,
+    };
+    return {
+      ...request,
+      toAction: () => request as Action<Payload, Response>,
     };
   }
 
@@ -79,15 +86,15 @@ export class MessagesV2 {
     this._verbose = verbose;
   }
 
-  request<Payload, Response>(request: Request<Payload, Response>) {
-    return this.handleRequest<Payload, Response>(request, chrome.runtime.connect({ name: request.type }));
+  request<Payload, Response>(action: Action<Payload, Response>) {
+    return this.handleRequest<Payload, Response>(action, chrome.runtime.connect({ name: action.type }));
   }
 
-  requestTab<Payload, Response>(tabId: number, request: Request<Payload, Response>) {
-    return this.handleRequest<Payload, Response>(request, chrome.tabs.connect(tabId, { name: request.type }));
+  requestTab<Payload, Response>(tabId: number, action: Action<Payload, Response>) {
+    return this.handleRequest<Payload, Response>(action, chrome.tabs.connect(tabId, { name: action.type }));
   }
 
-  private handleRequest<Payload, Response>(request: Request<Payload, Response>, port: Port) {
+  private handleRequest<Payload, Response>(action: Action<Payload, Response>, port: Port) {
     return new Promise<Response & Error>((resolve, reject) => {
       const onDisconnect = () => {
         try {
@@ -98,7 +105,7 @@ export class MessagesV2 {
           reject('Error handling runtime error: ' + JSON.stringify(e));
         }
         if (this._verbose) {
-          console.debug('Removing onDisconnect listener for:', request.type);
+          console.debug('Removing onDisconnect listener for:', action.type);
         }
         port.onDisconnect.removeListener(onDisconnect);
       };
@@ -106,13 +113,13 @@ export class MessagesV2 {
       const onMessage = (response: Response & Error) => {
         resolve(response);
         if (this._verbose) {
-          console.debug('Removing onMessage listener for:', request.type);
+          console.debug('Removing onMessage listener for:', action.type);
         }
         port.onMessage.removeListener(onMessage);
       };
       port.onMessage.addListener(onMessage);
       try {
-        port.postMessage(request.payload);
+        port.postMessage(action.payload);
       } catch (e) {
         reject('Error posting message: ' + JSON.stringify(e));
       }
