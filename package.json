@@ -1,11 +1,12 @@
 {
   "name": "@stolbivi/pirojok",
-  "version": "1.30.0",
+  "version": "2.01.0",
   "description": "Some minimalistic library used to build chrome extensions, covers some popular Chrome Extension API",
   "author": "Viktor Stolbin",
   "license": "ISC",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
+  "readme": "README.md",
   "keywords": [
     "chrome-extension",
     "chrome-api"

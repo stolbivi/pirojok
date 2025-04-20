@@ -1,155 +1,280 @@
-import Port = chrome.runtime.Port;
+/**
+ * Type definitions and utilities for Chrome extension messaging system.
+ * Provides a type-safe way to handle request-response style communication between different parts of a Chrome extension.
+ */
 
-export type MessageError = {
+import Port = chrome.runtime.Port;
+import MessageSender = chrome.runtime.MessageSender;
+
+/**
+ * Type definition for a message handler function
+ * @template Payload - Type of the incoming message payload
+ * @template Response - Type of the response to be sent back
+ */
+export type Handler<Payload, Response> = (payload: Payload, sender?: MessageSender) => Promise<Response>;
+
+/**
+ * Type definition for a request creator function
+ * @template Payload - Type of the request payload
+ * @template Response - Type of the expected response
+ */
+export type RequestCreator<Payload, Response> = { (payload?: Payload): Request<Payload, Response>; type: string };
+
+/**
+ * Type definition for an action creator function
+ * @template Payload - Type of the action payload
+ * @template Response - Type of the response to be sent back
+ */
+export type ActionCreator<Payload, Response> = { (payload?: Payload): Action<Payload, Response>; type: string };
+
+/**
+ * Interface representing a request message
+ * @template Payload - Type of the request payload
+ * @template Response - Type of the expected response
+ */
+export interface Request<Payload, Response> {
+  type: string;
+  payload?: Payload;
+  toAction: () => Action<Payload, Response>;
+}
+
+/**
+ * Interface representing an action that can handle a request
+ * @template Payload - Type of the action payload
+ * @template Response - Type of the response to be sent back
+ */
+export interface Action<Payload, Response> {
+  type: string;
+  payload?: Payload;
+  handler: Handler<Payload, Response>;
+}
+
+/**
+ * Type representing an error response
+ */
+export type Error = {
   error: string;
 };
 
-export interface TMessage {
-  type: number;
+/**
+ * Creates a request creator function for a specific message type
+ * @template Payload - Type of the request payload
+ * @template Response - Type of the expected response
+ * @param type - Unique identifier for the request type
+ * @returns A function that creates requests of the specified type
+ */
+export function createRequest<Payload, Response>(type: string): RequestCreator<Payload, Response> {
+  function create(payload?: Payload): Request<Payload, Response> {
+    const request = {
+      type,
+      payload,
+    };
+    return {
+      ...request,
+      toAction: () => request as Action<Payload, Response>,
+    };
+  }
+
+  create.toString = () => `${type}`;
+  create.type = type;
+  return create;
 }
 
-type ConnectionListener = (port: Port) => void;
-type OnResponse<R> = (response: R & MessageError) => void;
-type OnRequest<M extends TMessage, R> = (message: M) => Promise<R>;
-type Handler<M extends TMessage, R> = { [key: number]: OnRequest<M, R> };
+/**
+ * Creates an action creator function for handling specific message types
+ * @template Payload - Type of the action payload
+ * @template Response - Type of the response to be sent back
+ * @param type - Unique identifier for the action type
+ * @param handler - Function that will handle the incoming message
+ * @returns A function that creates actions of the specified type
+ */
+export function createAction<Payload, Response>(
+  type: string,
+  handler: Handler<Payload, Response>,
+): ActionCreator<Payload, Response> {
+  function create(payload?: Payload): Action<Payload, Response> {
+    return {
+      type,
+      payload: payload ?? undefined,
+      handler,
+    };
+  }
+
+  create.toString = () => `${type}`;
+  create.type = type;
+  return create;
+}
 
 /**
- * Chrome Messaging API wrapped into an easy-to-use framework.
+ * Creates an action creator from an existing request creator
+ * @template Payload - Type of the payload
+ * @template Response - Type of the response
+ * @param requestCreator - The request creator to base the action on
+ * @param handler - Function that will handle the incoming message
+ * @returns A function that creates actions matching the request type
+ */
+export function createFromRequest<Payload, Response>(
+  requestCreator: RequestCreator<Payload, Response>,
+  handler: Handler<Payload, Response>,
+): ActionCreator<Payload, Response> {
+  function create(payload?: Payload): Action<Payload, Response> {
+    return {
+      type: requestCreator.type,
+      payload,
+      handler,
+    };
+  }
+
+  create.toString = () => `${requestCreator.type}`;
+  create.type = requestCreator.type;
+  return create;
+}
+
+/**
+ * Type definition for a connection listener function
+ */
+export type OnConnectListener = (port: Port) => void;
+
+/**
+ * Enhanced messaging API wrapper for Chrome extensions.
+ * Provides a type-safe way to handle request-response communication between different parts of the extension.
+ * Automatically cleans up listeners after receiving a response or on failure.
  */
 export class Messages {
-  private readonly _channelId: string;
   private readonly _verbose: boolean;
 
   /**
-   * Requires a unique identifier used to group all messages in one channel.
-   * Listeners and senders on channels with different ids cannot communicate
-   * @param channelId
+   * Creates a new Messages instance
+   * @param verbose - Whether to enable verbose logging
    */
-  constructor(channelId: string, verbose = false) {
-    if (channelId) {
-      this._channelId = channelId;
-      this._verbose = verbose;
-    } else {
-      throw new Error('Channel id has to be non-empty string');
-    }
+  constructor(verbose = false) {
+    this._verbose = verbose;
   }
 
-  private handlePort<M extends TMessage, Response>(
-    message: M,
-    port: Port,
-    resolve: (_: Response) => void,
-    reject: (_: string) => void,
-    responder?: OnResponse<Response>,
-  ) {
-    const onDisconnectListener = () => {
-      if (chrome.runtime.lastError) {
+  /**
+   * Sends a request to the extension runtime
+   * @template Payload - Type of the request payload
+   * @template Response - Type of the expected response
+   * @param request - The request to send
+   * @returns Promise that resolves with the response or rejects with an error
+   */
+  request<Payload, Response>(request: Request<Payload, Response>) {
+    return this.handleRequest<Payload, Response>(request, chrome.runtime.connect({ name: request.type }));
+  }
+
+  /**
+   * Sends a request to a specific tab
+   * @template Payload - Type of the request payload
+   * @template Response - Type of the expected response
+   * @param tabId - ID of the target tab
+   * @param request - The request to send
+   * @returns Promise that resolves with the response or rejects with an error
+   */
+  requestTab<Payload, Response>(tabId: number, request: Request<Payload, Response>) {
+    return this.handleRequest<Payload, Response>(request, chrome.tabs.connect(tabId, { name: request.type }));
+  }
+
+  /**
+   * Handles the request-response cycle for a given port
+   * @template Payload - Type of the request payload
+   * @template Response - Type of the expected response
+   * @param request - The request to send
+   * @param port - The port to communicate through
+   * @returns Promise that resolves with the response or rejects with an error
+   */
+  private handleRequest<Payload, Response>(request: Request<Payload, Response>, port: Port) {
+    return new Promise<Response & Error>((resolve, reject) => {
+      const onDisconnect = () => {
         try {
-          reject(chrome.runtime.lastError.message as string);
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError.message as string);
+          }
         } catch (e) {
           reject('Error handling runtime error: ' + JSON.stringify(e));
         }
+        if (this._verbose) {
+          console.debug('Removing onDisconnect listener for:', request.type);
+        }
+        port.onDisconnect.removeListener(onDisconnect);
+      };
+      port.onDisconnect.addListener(onDisconnect);
+      const onMessage = (response: Response & Error) => {
+        resolve(response);
+        if (this._verbose) {
+          console.debug('Removing onMessage listener for:', request.type);
+        }
+        port.onMessage.removeListener(onMessage);
+      };
+      port.onMessage.addListener(onMessage);
+      try {
+        port.postMessage(request.payload);
+      } catch (e) {
+        reject('Error posting message: ' + JSON.stringify(e));
       }
-      if (this._verbose) {
-        console.debug('Removing onDisconnect listener for:', this._channelId);
-      }
-      port.onDisconnect.removeListener(onDisconnectListener);
-    };
-    port.onDisconnect.addListener(onDisconnectListener);
-    const listener = (response: Response & MessageError) => {
-      resolve(response);
-      if (responder) {
-        responder(response);
-      }
-      if (this._verbose) {
-        console.debug('Removing onMessage listener for:', this._channelId);
-      }
-      port.onMessage.removeListener(listener);
-    };
-    port.onMessage.addListener(listener);
-    port.postMessage(message);
-  }
-
-  /**
-   * Send a message from anywhere to anywhere except content script of a tab. There must be at least one listener created by using onMessage
-   * @param message object of type <b>M</b> to send to listeners
-   * @param receiver callback used to receive replies from listeners as an object of type <b>R</b>
-   */
-  request<M extends TMessage, Response>(message: M, onResponse?: OnResponse<Response>) {
-    return new Promise<Response>((resolve, reject) => {
-      const port = chrome.runtime.connect({ name: this._channelId });
-      this.handlePort(message, port, resolve, reject, onResponse);
     });
   }
 
   /**
-   * Send a message from anywhere to content script of a specific tab. There must be at least one listener created by using onMessage
-   * @param message object of type <b>M</b> to send to listeners
-   * @param receiver callback used to receive replies from listeners as an object of type <b>R</b>
+   * Sets up a listener for incoming connections of a specific type
+   * @template Payload - Type of the incoming message payload
+   * @template Response - Type of the response to be sent back
+   * @param actionCreator - Function that creates actions for handling messages
+   * @returns The connection listener function that was added
    */
-  requestTab<M extends TMessage, Response>(tabId: number, message: M, onResponse?: OnResponse<Response>) {
-    return new Promise<Response>((resolve, reject) => {
-      const port = chrome.tabs.connect(tabId, { name: this._channelId });
-      this.handlePort(message, port, resolve, reject, onResponse);
-    });
-  }
-
-  /**
-   * Add listener to messages anywhere, including content scripts of tabs. Each handler corresponds to specific request type. If handler returns anything but false/null/undefined, this will be sent back to requester
-   * @param onRequest
-   */
-  listen<M extends TMessage, Response>(handler: Handler<M, Response>): ConnectionListener {
-    const onConnectListener = (port: Port) => {
-      if (port.name === this._channelId) {
-        const onMessageListener = (message: M) => {
-          const onRequest = handler[message.type];
-          if (onRequest) {
-            onRequest(message)
-              .then((response) => {
-                if (response) {
-                  port.postMessage(response);
-                }
-              })
-              .then(() => {
-                if (this._verbose) {
-                  console.debug('Listener completed for:', port.name);
-                }
-              })
-              .catch((e) => console.error(e))
-              .finally(() => {
-                if (this._verbose) {
-                  console.debug('Disconnecting port and removing listener for:', this._channelId);
-                }
-                port.disconnect();
-                port.onMessage.removeListener(onMessageListener);
-              });
-          }
+  listen<Payload, Response>(actionCreator: ActionCreator<Payload, Response>): OnConnectListener {
+    const onConnect = (port: Port) => {
+      const action = actionCreator();
+      if (port.name === action.type) {
+        const onMessage = (payload: Payload) => {
+          action
+            .handler(payload, port.sender)
+            .then((response) => {
+              try {
+                port.postMessage(response);
+              } catch (e) {
+                console.error('Error posting response:', JSON.stringify(e));
+              }
+            })
+            .then(() => {
+              if (this._verbose) {
+                console.debug('Listener completed for:', port.name);
+              }
+            })
+            .catch((e) => console.error(e))
+            .finally(() => {
+              if (this._verbose) {
+                console.debug('Disconnecting port and removing listener');
+              }
+              port.disconnect();
+              port.onMessage.removeListener(onMessage);
+            });
         };
         if (this._verbose) {
           console.debug('Adding listener for port:', port.name);
         }
-        port.onMessage.addListener(onMessageListener);
-        const onDisconnectListener = (p: Port) => {
+        port.onMessage.addListener(onMessage);
+        const onDisconnect = (p: Port) => {
           if (this._verbose) {
             console.debug('Disconnect detected for:', p.name, 'removing listeners');
           }
-          p.onMessage.removeListener(onMessageListener);
-          p.onDisconnect.removeListener(onDisconnectListener);
+          p.onMessage.removeListener(onMessage);
+          p.onDisconnect.removeListener(onDisconnect);
         };
-        port.onDisconnect.addListener(onDisconnectListener);
+        port.onDisconnect.addListener(onDisconnect);
       }
     };
-    chrome.runtime.onConnect.addListener(onConnectListener);
-    return onConnectListener;
+    chrome.runtime.onConnect.addListener(onConnect);
+    return onConnect;
   }
 
   /**
-   * Remove previously created with onMessage listener
-   * @param listener
+   * Removes a previously added connection listener
+   * @param onConnect - The listener function to remove
    */
-  removeListener(listener: ConnectionListener) {
+  removeListener(onConnect: OnConnectListener) {
     if (this._verbose) {
-      console.debug('Removing listener for:', this._channelId);
+      console.debug('Removing listener');
     }
-    chrome.runtime.onConnect.removeListener(listener);
+    chrome.runtime.onConnect.removeListener(onConnect);
   }
 }
