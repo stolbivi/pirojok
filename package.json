@@ -1,6 +1,6 @@
 {
   "name": "@stolbivi/pirojok",
-  "version": "2.01.0",
+  "version": "2.02.0",
   "description": "Some minimalistic library used to build chrome extensions, covers some popular Chrome Extension API",
   "author": "Viktor Stolbin",
   "license": "ISC",
@@ -16,7 +16,8 @@
     "url": "git+https://github.com/stolbivi/pirojok.git"
   },
   "files": [
-    "lib/**/*"
+    "lib/**/*",
+    "README.md"
   ],
   "scripts": {
     "test": "mocha 'test/**/*.ts'",
